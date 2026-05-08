@@ -28,17 +28,21 @@ button{
 
 <body>
 
-<button id="btn">PLAY</button>
+<button id="play">PLAY</button>
 
 <script>
 
-let synth, comb, reverb, transient, limiter;
-let active = false;
-let timeoutId = null;
+let synth;
+let comb;
+let reverb;
+let transient;
+let limiter;
+let started = false;
+let stopTimer;
 
 const NOTES = ["C2","G2","C3","G3"];
 
-async function init() {
+async function initAudio() {
 
   await Tone.start();
 
@@ -99,17 +103,25 @@ async function init() {
 
   transient.connect(hp);
   hp.connect(reverb);
+
+  started = true;
 }
 
 function stopAll() {
-  if(timeoutId) clearTimeout(timeoutId);
+
+  if(stopTimer) clearTimeout(stopTimer);
+
   if(!synth) return;
 
-  synth.releaseAll();
-  comb.resonance.cancelScheduledValues(Tone.now());
+  const t = Tone.now();
+
+  synth.releaseAll(t);
+
+  comb.resonance.cancelScheduledValues(t);
+  reverb.wet.cancelScheduledValues(t);
 }
 
-function play() {
+function playSound() {
 
   stopAll();
 
@@ -137,18 +149,17 @@ function play() {
   reverb.wet.setValueAtTime(0.55, t);
   reverb.wet.linearRampToValueAtTime(0.9, t + 4);
 
-  timeoutId = setTimeout(()=>{
+  stopTimer = setTimeout(()=>{
     synth.releaseAll();
   }, 10000);
 }
 
-document.getElementById("btn").onclick = async () => {
-  if(!active){
-    await init();
-    active = true;
+document.getElementById("play").addEventListener("click", async () => {
+  if(!started){
+    await initAudio();
   }
-  play();
-};
+  playSound();
+});
 
 </script>
 
