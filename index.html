@@ -3,320 +3,350 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
 <title>FM Glass Comb Resonator</title>
 
 <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
 
 <style>
-  html, body {
-    margin: 0;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background: #050507;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: sans-serif;
-  }
+html, body{
+    margin:0;
+    width:100%;
+    height:100%;
+    background:#050507;
+    overflow:hidden;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-family:Arial, sans-serif;
+}
 
-  button {
-    padding: 18px 36px;
-    font-size: 15px;
-    border: none;
-    cursor: pointer;
-    background: white;
-    color: black;
-  }
+button{
+    padding:18px 36px;
+    border:none;
+    cursor:pointer;
+    background:white;
+    color:black;
+    font-size:15px;
+}
 </style>
 </head>
 
 <body>
 
-<button id="play">PLAY</button>
+<button id="playButton">PLAY</button>
 
 <script>
+
+let initialized = false;
 
 let synth;
 let comb;
 let reverb;
-let transient;
 let limiter;
-let activeTimeout;
+let transientSynth;
+let masterGain;
+
+let stopTimeout = null;
 
 const NOTES = ["C2", "G2", "C3", "G3"];
 
-async function buildEngine() {
+async function initAudio(){
 
-  await Tone.start();
+    if(initialized) return;
 
-  // ----------------------------------------------------
-  // MASTER LIMITER
-  // ----------------------------------------------------
+    await Tone.start();
 
-  limiter = new Tone.Limiter(-1).toDestination();
+    // -------------------------------------------------
+    // MASTER OUTPUT
+    // -------------------------------------------------
 
-  // ----------------------------------------------------
-  // REVERB
-  // ----------------------------------------------------
+    limiter = new Tone.Limiter(-1);
 
-  reverb = new Tone.Reverb({
-    decay: 8,
-    wet: 0.6
-  });
+    masterGain = new Tone.Gain(1);
 
-  reverb.connect(limiter);
+    masterGain.connect(limiter);
+    limiter.toDestination();
 
-  // ----------------------------------------------------
-  // COMB FILTER
-  // ----------------------------------------------------
+    // -------------------------------------------------
+    // REVERB
+    // -------------------------------------------------
 
-  comb = new Tone.FeedbackCombFilter({
-    delayTime: 0.0032,
-    resonance: 0.55
-  });
+    reverb = new Tone.Reverb({
+        decay: 8,
+        wet: 0.55
+    });
 
-  comb.connect(reverb);
+    reverb.connect(masterGain);
 
-  // ----------------------------------------------------
-  // FM SYNTH
-  // ----------------------------------------------------
+    // -------------------------------------------------
+    // COMB FILTER
+    // -------------------------------------------------
 
-  synth = new Tone.PolySynth(Tone.FMSynth, {
-    maxPolyphony: 4,
+    comb = new Tone.FeedbackCombFilter({
+        delayTime: 0.0032,
+        resonance: 0.55
+    });
 
-    harmonicity: 2,
+    comb.connect(reverb);
 
-    modulationIndex: 6,
+    // -------------------------------------------------
+    // FM POLYSYNTH
+    // -------------------------------------------------
 
-    oscillator: {
-      type: "sine"
-    },
+    synth = new Tone.PolySynth(Tone.FMSynth, {
 
-    modulation: {
-      type: "triangle"
-    },
+        maxPolyphony: 4,
 
-    envelope: {
-      attack: 0.001,
-      decay: 0.3,
-      sustain: 1,
-      release: 2
-    },
+        volume: -8,
 
-    modulationEnvelope: {
-      attack: 0.01,
-      decay: 0.2,
-      sustain: 1,
-      release: 2
+        harmonicity: 2,
+
+        modulationIndex: 8,
+
+        oscillator: {
+            type: "sine"
+        },
+
+        modulation: {
+            type: "triangle"
+        },
+
+        envelope: {
+            attack: 0.005,
+            decay: 0.2,
+            sustain: 1,
+            release: 5
+        },
+
+        modulationEnvelope: {
+            attack: 0.01,
+            decay: 0.2,
+            sustain: 1,
+            release: 5
+        }
+
+    });
+
+    synth.connect(comb);
+
+    // -------------------------------------------------
+    // PER VOICE DIFFERENTIATION
+    // -------------------------------------------------
+
+    synth.voices.forEach((voice, i) => {
+
+        voice.detune.value =
+            [-4, 2, -1, 5][i];
+
+        voice.harmonicity.value =
+            [2, 3, 4, 5][i];
+
+        voice.modulationIndex.value =
+            [8, 10, 12, 14][i];
+
+    });
+
+    // -------------------------------------------------
+    // TRANSIENT
+    // -------------------------------------------------
+
+    transientSynth = new Tone.NoiseSynth({
+
+        volume: -4,
+
+        noise: {
+            type: "white"
+        },
+
+        envelope: {
+            attack: 0.0001,
+            decay: 0.035,
+            sustain: 0,
+            release: 0.02
+        }
+
+    });
+
+    const transientHP = new Tone.Filter({
+        type: "highpass",
+        frequency: 7000,
+        Q: 0.8
+    });
+
+    transientSynth.connect(transientHP);
+    transientHP.connect(reverb);
+
+    initialized = true;
+}
+
+function stopPlayback(){
+
+    if(stopTimeout){
+        clearTimeout(stopTimeout);
     }
 
-  });
+    if(!initialized) return;
 
-  synth.volume.value = -10;
+    const now = Tone.now();
 
-  synth.connect(comb);
+    synth.releaseAll(now);
 
-  // ----------------------------------------------------
-  // VOICE DIFFERENTIATION
-  // ----------------------------------------------------
+    synth.volume.cancelScheduledValues(now);
 
-  synth.voices.forEach((voice, i) => {
+    comb.resonance.cancelScheduledValues(now);
 
-    voice.detune.value = i * 2;
+    reverb.wet.cancelScheduledValues(now);
 
-    voice.harmonicity.value =
-      [2, 3, 4, 5][i];
+    masterGain.gain.cancelScheduledValues(now);
 
-    voice.modulationIndex.value =
-      [6, 8, 10, 12][i];
-
-  });
-
-  // ----------------------------------------------------
-  // TRANSIENT
-  // ----------------------------------------------------
-
-  transient = new Tone.NoiseSynth({
-
-    noise: {
-      type: "white"
-    },
-
-    envelope: {
-      attack: 0.0001,
-      decay: 0.025,
-      sustain: 0,
-      release: 0.01
-    }
-
-  });
-
-  const transientHPF = new Tone.Filter({
-    type: "highpass",
-    frequency: 6500,
-    Q: 1
-  });
-
-  transient.chain(transientHPF, reverb);
-
+    masterGain.gain.setValueAtTime(1, now);
 }
 
-function stopPlayback() {
+function playSound(){
 
-  if (activeTimeout) {
-    clearTimeout(activeTimeout);
-  }
+    stopPlayback();
 
-  Tone.Transport.stop();
-  Tone.Transport.cancel();
+    const now = Tone.now();
 
-  if (synth) {
-    synth.releaseAll();
-  }
+    // -------------------------------------------------
+    // TRANSIENT HIT
+    // -------------------------------------------------
 
-  if (comb) {
-    comb.resonance.cancelScheduledValues(Tone.now());
-  }
-
-  if (reverb) {
-    reverb.wet.cancelScheduledValues(Tone.now());
-  }
-
-}
-
-function playSystem() {
-
-  stopPlayback();
-
-  const now = Tone.now();
-
-  // ----------------------------------------------------
-  // TRANSIENT HIT
-  // ----------------------------------------------------
-
-  transient.triggerAttackRelease(
-    "0.02",
-    now,
-    0.6
-  );
-
-  // ----------------------------------------------------
-  // FM CHORD START
-  // ----------------------------------------------------
-
-  synth.triggerAttack(
-    NOTES,
-    now,
-    0.9
-  );
-
-  // ----------------------------------------------------
-  // 0–2s COMB OPENING
-  // ----------------------------------------------------
-
-  comb.resonance.setValueAtTime(
-    0.45,
-    now
-  );
-
-  comb.resonance.linearRampToValueAtTime(
-    0.96,
-    now + 2
-  );
-
-  // ----------------------------------------------------
-  // FM EVOLUTION
-  // ----------------------------------------------------
-
-  synth.voices.forEach((voice, i) => {
-
-    voice.modulationIndex.cancelScheduledValues(now);
-
-    voice.modulationIndex.setValueAtTime(
-      6 + i,
-      now
+    transientSynth.triggerAttackRelease(
+        0.03,
+        now,
+        0.9
     );
 
-    voice.modulationIndex.linearRampToValueAtTime(
-      22,
-      now + 3
+    // -------------------------------------------------
+    // START FM CHORD
+    // -------------------------------------------------
+
+    synth.triggerAttack(
+        NOTES,
+        now,
+        0.9
     );
 
-  });
+    // -------------------------------------------------
+    // INITIAL LEVEL
+    // -------------------------------------------------
 
-  // ----------------------------------------------------
-  // GLOBAL BRIGHTNESS BUILD
-  // ----------------------------------------------------
+    synth.volume.setValueAtTime(
+        -12,
+        now
+    );
 
-  synth.volume.setValueAtTime(
-    -12,
-    now
-  );
+    // -------------------------------------------------
+    // 0 → 2s
+    // COMB OPENING
+    // -------------------------------------------------
 
-  synth.volume.linearRampToValueAtTime(
-    -4,
-    now + 2.8
-  );
+    comb.resonance.setValueAtTime(
+        0.4,
+        now
+    );
 
-  // ----------------------------------------------------
-  // SECOND 3 COLLAPSE
-  // ----------------------------------------------------
+    comb.resonance.linearRampToValueAtTime(
+        0.97,
+        now + 2
+    );
 
-  comb.resonance.linearRampToValueAtTime(
-    0.02,
-    now + 3
-  );
+    // -------------------------------------------------
+    // FM EVOLUTION
+    // -------------------------------------------------
 
-  // FM BODY REMOVED
-  synth.triggerRelease(
-    NOTES,
-    now + 3
-  );
+    synth.voices.forEach((voice, i) => {
 
-  // ----------------------------------------------------
-  // REVERB RESIDUAL PHASE
-  // ----------------------------------------------------
+        voice.modulationIndex.cancelScheduledValues(now);
 
-  reverb.wet.setValueAtTime(
-    0.6,
-    now
-  );
+        voice.modulationIndex.setValueAtTime(
+            [8,10,12,14][i],
+            now
+        );
 
-  reverb.wet.linearRampToValueAtTime(
-    0.92,
-    now + 4
-  );
+        voice.modulationIndex.linearRampToValueAtTime(
+            24,
+            now + 3
+        );
 
-  // ----------------------------------------------------
-  // 8–10s FINAL FADE
-  // ----------------------------------------------------
+    });
 
-  reverb.wet.linearRampToValueAtTime(
-    0,
-    now + 10
-  );
+    // -------------------------------------------------
+    // BRIGHTNESS / ENERGY BUILD
+    // -------------------------------------------------
 
-  // ----------------------------------------------------
-  // HARD STOP
-  // ----------------------------------------------------
+    synth.volume.linearRampToValueAtTime(
+        -2,
+        now + 2.8
+    );
 
-  activeTimeout = setTimeout(() => {
+    // -------------------------------------------------
+    // SECOND 3
+    // COLLAPSE
+    // -------------------------------------------------
 
-    synth.releaseAll();
+    comb.resonance.linearRampToValueAtTime(
+        0.02,
+        now + 3
+    );
 
-  }, 10000);
+    // remove FM body
+    synth.triggerRelease(
+        NOTES,
+        now + 3
+    );
 
+    // -------------------------------------------------
+    // REVERB TAIL
+    // -------------------------------------------------
+
+    reverb.wet.setValueAtTime(
+        0.55,
+        now
+    );
+
+    reverb.wet.linearRampToValueAtTime(
+        0.9,
+        now + 4
+    );
+
+    // -------------------------------------------------
+    // FINAL FADE
+    // 8 → 10s
+    // -------------------------------------------------
+
+    masterGain.gain.setValueAtTime(
+        1,
+        now + 8
+    );
+
+    masterGain.gain.linearRampToValueAtTime(
+        0,
+        now + 10
+    );
+
+    // -------------------------------------------------
+    // HARD STOP
+    // -------------------------------------------------
+
+    stopTimeout = setTimeout(() => {
+
+        synth.releaseAll();
+
+        masterGain.gain.value = 1;
+
+    }, 10000);
 }
 
-document.getElementById("play")
+document
+.getElementById("playButton")
 .addEventListener("click", async () => {
 
-  if (!synth) {
-    await buildEngine();
-  }
+    await initAudio();
 
-  playSystem();
+    playSound();
 
 });
 
