@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>FM Glass Comb Resonator</title>
 
 <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
@@ -11,20 +12,21 @@
     margin: 0;
     width: 100%;
     height: 100%;
+    overflow: hidden;
     background: #050507;
     display: flex;
     align-items: center;
     justify-content: center;
-    overflow: hidden;
     font-family: sans-serif;
   }
 
   button {
-    padding: 18px 34px;
-    font-size: 16px;
-    cursor: pointer;
+    padding: 18px 36px;
+    font-size: 15px;
     border: none;
+    cursor: pointer;
     background: white;
+    color: black;
   }
 </style>
 </head>
@@ -39,6 +41,7 @@ let synth;
 let comb;
 let reverb;
 let transient;
+let limiter;
 let activeTimeout;
 
 const NOTES = ["C2", "G2", "C3", "G3"];
@@ -47,29 +50,37 @@ async function buildEngine() {
 
   await Tone.start();
 
-  // -----------------------------
+  // ----------------------------------------------------
+  // MASTER LIMITER
+  // ----------------------------------------------------
+
+  limiter = new Tone.Limiter(-1).toDestination();
+
+  // ----------------------------------------------------
   // REVERB
-  // -----------------------------
+  // ----------------------------------------------------
 
   reverb = new Tone.Reverb({
-    decay: 7,
-    wet: 0.55
-  }).toDestination();
+    decay: 8,
+    wet: 0.6
+  });
 
-  // -----------------------------
+  reverb.connect(limiter);
+
+  // ----------------------------------------------------
   // COMB FILTER
-  // -----------------------------
+  // ----------------------------------------------------
 
   comb = new Tone.FeedbackCombFilter({
-    delayTime: 0.0035, // ultra short glass resonance
-    resonance: 0.82
+    delayTime: 0.0032,
+    resonance: 0.55
   });
 
   comb.connect(reverb);
 
-  // -----------------------------
-  // FM POLYSYNTH
-  // -----------------------------
+  // ----------------------------------------------------
+  // FM SYNTH
+  // ----------------------------------------------------
 
   synth = new Tone.PolySynth(Tone.FMSynth, {
     maxPolyphony: 4,
@@ -83,35 +94,36 @@ async function buildEngine() {
     },
 
     modulation: {
-      type: "square"
+      type: "triangle"
     },
 
     envelope: {
       attack: 0.001,
-      decay: 0.4,
-      sustain: 0.8,
-      release: 4
+      decay: 0.3,
+      sustain: 1,
+      release: 2
     },
 
     modulationEnvelope: {
       attack: 0.01,
       decay: 0.2,
       sustain: 1,
-      release: 4
+      release: 2
     }
+
   });
 
-  synth.volume.value = -8;
+  synth.volume.value = -10;
 
   synth.connect(comb);
 
-  // -----------------------------
-  // PER VOICE DIFFERENT DENSITY
-  // -----------------------------
+  // ----------------------------------------------------
+  // VOICE DIFFERENTIATION
+  // ----------------------------------------------------
 
   synth.voices.forEach((voice, i) => {
 
-    voice.detune.value = i * 3;
+    voice.detune.value = i * 2;
 
     voice.harmonicity.value =
       [2, 3, 4, 5][i];
@@ -121,9 +133,9 @@ async function buildEngine() {
 
   });
 
-  // -----------------------------
+  // ----------------------------------------------------
   // TRANSIENT
-  // -----------------------------
+  // ----------------------------------------------------
 
   transient = new Tone.NoiseSynth({
 
@@ -132,66 +144,76 @@ async function buildEngine() {
     },
 
     envelope: {
-      attack: 0.0005,
-      decay: 0.03,
+      attack: 0.0001,
+      decay: 0.025,
       sustain: 0,
       release: 0.01
     }
 
   });
 
-  const transientFilter = new Tone.Filter({
+  const transientHPF = new Tone.Filter({
     type: "highpass",
-    frequency: 5000
+    frequency: 6500,
+    Q: 1
   });
 
-  transient.chain(transientFilter, reverb);
+  transient.chain(transientHPF, reverb);
 
 }
 
-function stopPreviousPlayback() {
-
-  Tone.Transport.stop();
+function stopPlayback() {
 
   if (activeTimeout) {
     clearTimeout(activeTimeout);
   }
 
+  Tone.Transport.stop();
+  Tone.Transport.cancel();
+
   if (synth) {
     synth.releaseAll();
   }
 
+  if (comb) {
+    comb.resonance.cancelScheduledValues(Tone.now());
+  }
+
+  if (reverb) {
+    reverb.wet.cancelScheduledValues(Tone.now());
+  }
+
 }
 
-function playEngine() {
+function playSystem() {
 
-  stopPreviousPlayback();
+  stopPlayback();
 
   const now = Tone.now();
 
-  // -----------------------------
+  // ----------------------------------------------------
   // TRANSIENT HIT
-  // -----------------------------
+  // ----------------------------------------------------
 
   transient.triggerAttackRelease(
     "0.02",
-    now
+    now,
+    0.6
   );
 
-  // -----------------------------
+  // ----------------------------------------------------
   // FM CHORD START
-  // -----------------------------
+  // ----------------------------------------------------
 
   synth.triggerAttack(
     NOTES,
-    now
+    now,
+    0.9
   );
 
-  // -----------------------------
+  // ----------------------------------------------------
   // 0–2s COMB OPENING
-  // -----------------------------
-
-  comb.resonance.cancelScheduledValues(now);
+  // ----------------------------------------------------
 
   comb.resonance.setValueAtTime(
     0.45,
@@ -199,86 +221,85 @@ function playEngine() {
   );
 
   comb.resonance.linearRampToValueAtTime(
-    0.95,
+    0.96,
     now + 2
   );
 
-  // -----------------------------
-  // MODULATION INDEX EVOLUTION
-  // -----------------------------
+  // ----------------------------------------------------
+  // FM EVOLUTION
+  // ----------------------------------------------------
 
   synth.voices.forEach((voice, i) => {
 
     voice.modulationIndex.cancelScheduledValues(now);
 
     voice.modulationIndex.setValueAtTime(
-      5 + i,
+      6 + i,
       now
     );
 
     voice.modulationIndex.linearRampToValueAtTime(
-      18,
+      22,
       now + 3
     );
 
   });
 
-  // -----------------------------
-  // PEAK BEFORE COLLAPSE
-  // -----------------------------
+  // ----------------------------------------------------
+  // GLOBAL BRIGHTNESS BUILD
+  // ----------------------------------------------------
 
   synth.volume.setValueAtTime(
-    -8,
+    -12,
     now
   );
 
   synth.volume.linearRampToValueAtTime(
-    -3,
+    -4,
     now + 2.8
   );
 
-  // -----------------------------
-  // SECOND 3
-  // COMB COLLAPSE
-  // -----------------------------
+  // ----------------------------------------------------
+  // SECOND 3 COLLAPSE
+  // ----------------------------------------------------
 
   comb.resonance.linearRampToValueAtTime(
-    0.05,
+    0.02,
     now + 3
   );
 
-  // remove body after collapse
+  // FM BODY REMOVED
   synth.triggerRelease(
     NOTES,
     now + 3
   );
 
-  // -----------------------------
-  // REVERB TAIL ONLY
-  // -----------------------------
+  // ----------------------------------------------------
+  // REVERB RESIDUAL PHASE
+  // ----------------------------------------------------
 
   reverb.wet.setValueAtTime(
-    0.55,
+    0.6,
     now
   );
 
   reverb.wet.linearRampToValueAtTime(
-    0.85,
+    0.92,
     now + 4
   );
 
-  // -----------------------------
+  // ----------------------------------------------------
   // 8–10s FINAL FADE
-  // -----------------------------
+  // ----------------------------------------------------
 
   reverb.wet.linearRampToValueAtTime(
     0,
     now + 10
   );
 
-  // -----------------------------
+  // ----------------------------------------------------
   // HARD STOP
-  // -----------------------------
+  // ----------------------------------------------------
 
   activeTimeout = setTimeout(() => {
 
@@ -289,15 +310,15 @@ function playEngine() {
 }
 
 document.getElementById("play")
-  .addEventListener("click", async () => {
+.addEventListener("click", async () => {
 
-    if (!synth) {
-      await buildEngine();
-    }
+  if (!synth) {
+    await buildEngine();
+  }
 
-    playEngine();
+  playSystem();
 
-  });
+});
 
 </script>
 
