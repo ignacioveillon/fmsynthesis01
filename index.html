@@ -1,164 +1,194 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FM Glass Comb Resonator</title>
 
 <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
 
 <style>
-html,body{
-  margin:0;
-  height:100%;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:#050507;
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #050507;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
 }
-button{
-  padding:18px 36px;
-  font-size:16px;
-  border:none;
-  cursor:pointer;
-  background:#fff;
+
+button {
+    padding: 18px 36px;
+    font-size: 16px;
+    border: none;
+    cursor: pointer;
+    background: white;
+    color: black;
 }
 </style>
 </head>
 
 <body>
 
-<button id="play">PLAY</button>
+<button id="playButton">PLAY</button>
 
 <script>
 
 let synth;
 let comb;
 let reverb;
+let dryGain;
+let wetGain;
 let transient;
-let limiter;
-let started = false;
-let stopTimer;
+let initialized = false;
+let stopTimeout = null;
 
-const NOTES = ["C2","G2","C3","G3"];
+const NOTES = ["C2", "G2", "C3", "G3"];
 
-async function initAudio() {
+async function initializeAudio() {
 
-  await Tone.start();
+    await Tone.start();
 
-  limiter = new Tone.Limiter(-1).toDestination();
+    // DRY PATH
+    dryGain = new Tone.Gain(0.8).toDestination();
 
-  reverb = new Tone.Reverb({
-    decay: 8,
-    wet: 0.55
-  }).connect(limiter);
+    // WET PATH
+    wetGain = new Tone.Gain(0.7).toDestination();
 
-  comb = new Tone.FeedbackCombFilter({
-    delayTime: 0.003,
-    resonance: 0.6
-  }).connect(reverb);
+    reverb = new Tone.Reverb({
+        decay: 8,
+        wet: 1
+    });
 
-  synth = new Tone.PolySynth(Tone.FMSynth, {
-    harmonicity: 2,
-    modulationIndex: 8,
-    oscillator: { type: "sine" },
-    modulation: { type: "triangle" },
-    envelope: {
-      attack: 0.005,
-      decay: 0.2,
-      sustain: 1,
-      release: 5
-    },
-    modulationEnvelope: {
-      attack: 0.01,
-      decay: 0.2,
-      sustain: 1,
-      release: 5
-    }
-  });
+    comb = new Tone.FeedbackCombFilter({
+        delayTime: 0.003,
+        resonance: 0.65
+    });
 
-  synth.volume.value = -10;
-  synth.connect(comb);
+    comb.connect(reverb);
+    reverb.connect(wetGain);
 
-  synth.voices.forEach((v,i)=>{
-    v.detune.value = [-4,2,-1,5][i];
-    v.harmonicity.value = [2,3,4,5][i];
-    v.modulationIndex.value = [6,8,10,12][i];
-  });
+    // STRICT POLYSYNTH
+    synth = new Tone.PolySynth(Tone.FMSynth, {
+        harmonicity: 2,
+        modulationIndex: 10,
+        oscillator: {
+            type: "sine"
+        },
+        modulation: {
+            type: "triangle"
+        },
+        envelope: {
+            attack: 0.005,
+            decay: 0.2,
+            sustain: 1,
+            release: 5
+        },
+        modulationEnvelope: {
+            attack: 0.01,
+            decay: 0.2,
+            sustain: 1,
+            release: 5
+        }
+    });
 
-  transient = new Tone.NoiseSynth({
-    noise: { type: "white" },
-    envelope: {
-      attack: 0.0001,
-      decay: 0.03,
-      sustain: 0,
-      release: 0.01
-    }
-  });
+    synth.volume.value = -8;
 
-  const hp = new Tone.Filter({
-    type: "highpass",
-    frequency: 7000
-  });
+    // SPLIT ROUTING
+    synth.connect(dryGain);
+    synth.connect(comb);
 
-  transient.connect(hp);
-  hp.connect(reverb);
+    // TRANSIENT
+    transient = new Tone.NoiseSynth({
+        noise: {
+            type: "white"
+        },
+        envelope: {
+            attack: 0.0001,
+            decay: 0.03,
+            sustain: 0,
+            release: 0.01
+        }
+    });
 
-  started = true;
+    const highpass = new Tone.Filter({
+        type: "highpass",
+        frequency: 8000
+    });
+
+    transient.connect(highpass);
+    highpass.connect(wetGain);
+
+    initialized = true;
 }
 
-function stopAll() {
+function stopPlayback() {
 
-  if(stopTimer) clearTimeout(stopTimer);
+    if (stopTimeout) {
+        clearTimeout(stopTimeout);
+    }
 
-  if(!synth) return;
+    if (!synth) return;
 
-  const t = Tone.now();
+    synth.releaseAll();
 
-  synth.releaseAll(t);
+    const now = Tone.now();
 
-  comb.resonance.cancelScheduledValues(t);
-  reverb.wet.cancelScheduledValues(t);
+    comb.resonance.cancelScheduledValues(now);
+    dryGain.gain.cancelScheduledValues(now);
+    wetGain.gain.cancelScheduledValues(now);
 }
 
 function playSound() {
 
-  stopAll();
+    stopPlayback();
 
-  const t = Tone.now();
+    const t = Tone.now();
 
-  transient.triggerAttackRelease(0.03, t);
+    // RESET LEVELS
+    dryGain.gain.setValueAtTime(0.8, t);
+    wetGain.gain.setValueAtTime(0.7, t);
 
-  synth.triggerAttack(NOTES, t, 0.9);
+    // INITIAL TRANSIENT
+    transient.triggerAttackRelease(0.03, t);
 
-  comb.resonance.setValueAtTime(0.4, t);
-  comb.resonance.linearRampToValueAtTime(0.95, t + 2);
-  comb.resonance.linearRampToValueAtTime(0.02, t + 3);
+    // FM CHORD
+    synth.triggerAttack(NOTES, t, 0.9);
 
-  synth.voices.forEach((v,i)=>{
-    v.modulationIndex.cancelScheduledValues(t);
-    v.modulationIndex.setValueAtTime([6,8,10,12][i], t);
-    v.modulationIndex.linearRampToValueAtTime(22, t + 3);
-  });
+    // COMB EVOLUTION
+    comb.resonance.setValueAtTime(0.35, t);
+    comb.resonance.linearRampToValueAtTime(0.72, t + 2);
+    comb.resonance.linearRampToValueAtTime(0.05, t + 3);
 
-  synth.volume.setValueAtTime(-12, t);
-  synth.volume.linearRampToValueAtTime(-2, t + 2.8);
+    // GLOBAL FM ENERGY
+    synth.volume.setValueAtTime(-10, t);
+    synth.volume.linearRampToValueAtTime(-2, t + 2.8);
 
-  synth.triggerRelease(NOTES, t + 3);
+    // FM COLLAPSE
+    synth.triggerRelease(NOTES, t + 3);
 
-  reverb.wet.setValueAtTime(0.55, t);
-  reverb.wet.linearRampToValueAtTime(0.9, t + 4);
+    // FINAL FADE
+    dryGain.gain.setValueAtTime(0.8, t + 8);
+    dryGain.gain.linearRampToValueAtTime(0, t + 10);
 
-  stopTimer = setTimeout(()=>{
-    synth.releaseAll();
-  }, 10000);
+    wetGain.gain.setValueAtTime(0.7, t + 8);
+    wetGain.gain.linearRampToValueAtTime(0, t + 10);
+
+    stopTimeout = setTimeout(() => {
+        synth.releaseAll();
+    }, 10000);
 }
 
-document.getElementById("play").addEventListener("click", async () => {
-  if(!started){
-    await initAudio();
-  }
-  playSound();
+document.getElementById("playButton").addEventListener("click", async () => {
+
+    if (!initialized) {
+        await initializeAudio();
+    }
+
+    playSound();
+
 });
 
 </script>
